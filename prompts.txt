@@ -1,0 +1,33 @@
+create voice bot app with below steps. Choose all open source tools and keys if below mentioned are not opensource. Indian language support should be availalbe. Present to support Dr Bharath oncologist. Prepare some RAG model also with some sample oncology script)
+phone Call
+   ↓
+Telephony Provider
+(Twilio / Plivo / Exotel)
+   ↓
+Realtime Voice Server
+(WebSocket streaming)
+   ↓
+Speech-to-Text
+(Deepgram / OpenAI / AssemblyAI)
+   ↓
+LLM Agent
+(OpenAI / Anthropic / Gemini)
+   ↓
+Tools + Database + APIs
+(CRM, booking, WhatsApp, payments)
+   ↓
+Text-to-Speech
+(ElevenLabs / OpenAI TTS / Cartesia)
+   ↓
+Caller hears AI voice
+
+----
+
+Prompt2:
+It is great. butvoice response is little lag. Telugu language is not fluent. Starting is saying Mr. Sameer without asking my name.  Please correct and and regenerate the app with production ready.
+
+http://127.0.0.1:8000/
+
+Run command:
+.venv\Scripts\python run.py
+

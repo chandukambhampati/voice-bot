@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dr. Bharat Patodiya - AI Oncology Telecaller</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Premium Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/index.css">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- Sidebar: Phone Call Simulator -->
+        <aside class="phone-simulator-panel">
+            <div class="panel-header">
+                <div class="brand-logo">
+                    <i class="fa-solid fa-house-medical"></i>
+                    <span>Advanced Cancer Center</span>
+                </div>
+            </div>
+            
+            <div class="smartphone-frame">
+                <div class="smartphone-screen">
+                    <div class="phone-status-bar">
+                        <span>12:00</span>
+                        <div class="status-icons">
+                            <i class="fa-solid fa-wifi"></i>
+                            <i class="fa-solid fa-battery-three-quarters"></i>
+                        </div>
+                    </div>
+                    
+                    <div class="phone-caller-info">
+                        <div class="caller-avatar">
+                            <i class="fa-solid fa-user-doctor"></i>
+                        </div>
+                        <h3 class="caller-name">Dr. Bharat's AI Assistant</h3>
+                        <p class="caller-status" id="call-status-text">Disconnected</p>
+                    </div>
+                    
+                    <!-- Sound Wave Visualizer -->
+                    <div class="visualizer-container">
+                        <div class="wave-bar" style="--i:1"></div>
+                        <div class="wave-bar" style="--i:2"></div>
+                        <div class="wave-bar" style="--i:3"></div>
+                        <div class="wave-bar" style="--i:4"></div>
+                        <div class="wave-bar" style="--i:5"></div>
+                        <div class="wave-bar" style="--i:6"></div>
+                        <div class="wave-bar" style="--i:7"></div>
+                        <div class="wave-bar" style="--i:8"></div>
+                        <div class="wave-bar" style="--i:9"></div>
+                        <div class="wave-bar" style="--i:10"></div>
+                    </div>
+                    
+                    <!-- Call Controls -->
+                    <div class="phone-controls">
+                        <button class="control-btn end-call-btn" id="call-toggle-btn" title="Start Call">
+                            <i class="fa-solid fa-phone"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Simulation Settings -->
+            <div class="simulation-settings-card">
+                <h4><i class="fa-solid fa-sliders"></i> Call Settings</h4>
+                
+                <div class="settings-group">
+                    <label for="lead-name-input">Lead Name (in CRM)</label>
+                    <input type="text" id="lead-name-input" class="styled-input" placeholder="Leave blank — bot will ask caller's name" value="">
+                </div>
+                
+                <div class="settings-group">
+                    <label for="language-select">Bot Voice &amp; Response Language</label>
+                    <select id="language-select" class="styled-select">
+                        <option value="en_neerja" selected>English (India) — Neerja Female</option>
+                        <option value="en_prabhat">English (India) — Prabhat Male</option>
+                        <option value="hi_swara">Hindi / Hinglish — Swara Female</option>
+                        <option value="hi_madhur">Hindi / Hinglish — Madhur Male</option>
+                        <option value="te_shruti">Telugu — Shruti Female</option>
+                        <option value="te_mohan">Telugu — Mohan Male</option>
+                    </select>
+                    <span class="setting-help">Sets the bot's response voice. The bot also understands Hindi &amp; Telugu dynamically even in English mode.</span>
+                </div>
+                
+                <div class="settings-group">
+                    <label for="input-mode-select">Your Speech Input Mode</label>
+                    <select id="input-mode-select" class="styled-select">
+                        <option value="speech_api" selected>Web Speech API — Recommended (en / hi / te)</option>
+                        <option value="mic_stream">Whisper AI Upload — Backup (any language)</option>
+                    </select>
+                    <span class="setting-help">Web Speech API works natively in Chrome for English, Hindi &amp; Telugu with zero latency. If mic is blocked, allow it in the address bar 🔒.</span>
+                </div>
+            </div>
+
+            <!-- Mic Permission Status Banner -->
+            <div id="mic-status-banner" class="mic-status-banner mic-unknown">
+                <i class="fa-solid fa-microphone" id="mic-icon"></i>
+                <span id="mic-status-label">Checking microphone...</span>
+                <button id="mic-test-btn" onclick="checkMicPermission()" class="mic-test-btn">Test Mic</button>
+            </div>
+
+        </aside>
+        
+        <!-- Main: Agent Mind & CRM Dashboard -->
+        <main class="dashboard-main">
+            <!-- Header -->
+            <header class="main-header">
+                <div class="header-title">
+                    <h1>AI Telecalling Voicebot Agent</h1>
+                    <p>Production Console & Lead Qualification Dashboard</p>
+                </div>
+                <div class="doctor-badge">
+                    <div class="badge-icon"><i class="fa-solid fa-user-md"></i></div>
+                    <div class="badge-text">
+                        <strong>Dr. Bharat Patodiya</strong>
+                        <span>Oncology Specialist</span>
+                    </div>
+                </div>
+            </header>
+            
+            <!-- GIQPPC Framework Pipeline Tracker -->
+            <section class="pipeline-tracker-section">
+                <h3><i class="fa-solid fa-route"></i> GIQPPC Conversational Pipeline</h3>
+                <div class="pipeline-flow">
+                    <div class="pipeline-step active" id="step-G" data-tooltip="Greeting & Identity Confirmation">
+                        <div class="step-num">G</div>
+                        <span class="step-name">Greeting</span>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="pipeline-step" id="step-I" data-tooltip="Intention & Digital Link Reconnection">
+                        <div class="step-num">I</div>
+                        <span class="step-name">Intention</span>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="pipeline-step" id="step-Q" data-tooltip="Qualification (Relation, Authority, Travel Fit)">
+                        <div class="step-num">Q</div>
+                        <span class="step-name">Qualification</span>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="pipeline-step" id="step-PE" data-tooltip="Pain Elicitation & Symptom Probing">
+                        <div class="step-num">P</div>
+                        <span class="step-name">Pain Elicit</span>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="pipeline-step" id="step-PR" data-tooltip="Proposal of Online Case Review">
+                        <div class="step-num">P</div>
+                        <span class="step-name">Proposal</span>
+                    </div>
+                    <div class="pipeline-connector"></div>
+                    <div class="pipeline-step" id="step-C" data-tooltip="Closing (Standard vs Premium Offer)">
+                        <div class="step-num">C</div>
+                        <span class="step-name">Closing</span>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Middle Columns: Transcript and CRM Tags -->
+            <div class="dashboard-grid">
+                
+                <!-- Left: Live Transcript -->
+                <div class="card transcript-card">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-comment-dots"></i> Live Conversation Transcript</h3>
+                        <span class="live-indicator"><span class="dot"></span> Live</span>
+                    </div>
+                    <div class="transcript-box" id="transcript-container">
+                        <!-- Chat Bubbles -->
+                        <div class="chat-bubble system">
+                            <div class="avatar"><i class="fa-solid fa-robot"></i></div>
+                            <div class="content">
+                                <p>Start a simulated call on the left panel to begin. Speak or reply to guide the lead through the qualification pipeline.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="input-fallback-area">
+                        <input type="text" id="keyboard-input" placeholder="Type a message here if microphone is unavailable..." disabled>
+                        <button id="send-input-btn" disabled><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
+                </div>
+                
+                <!-- Right: CRM Tags & Agent Brain -->
+                <div class="dashboard-subgrid">
+                    
+                    <!-- CRM Lead Qualification Tags -->
+                    <div class="card crm-card">
+                        <div class="card-header">
+                            <h3><i class="fa-solid fa-address-card"></i> CRM Lead Tags (Real-time Extraction)</h3>
+                        </div>
+                        <div class="crm-tags-list">
+                            <div class="tag-row">
+                                <span class="tag-label">Caller Name:</span>
+                                <span class="tag-value badge" id="tag-caller-name">Unsure</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Patient Relation:</span>
+                                <span class="tag-value badge" id="tag-relation">Unsure</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Cancer Type:</span>
+                                <span class="tag-value badge" id="tag-cancer">Unsure</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Symptoms Probed:</span>
+                                <span class="tag-value" id="tag-symptoms">None</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Decision Authority:</span>
+                                <span class="tag-value badge" id="tag-authority">Unsure</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Travel Fit:</span>
+                                <span class="tag-value badge" id="tag-travel">Unsure</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Lead Temperature:</span>
+                                <span class="tag-value badge" id="tag-temperature">Warm</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Buyer Persona:</span>
+                                <span class="tag-value badge" id="tag-persona">Unsure</span>
+                            </div>
+                            <div class="tag-row">
+                                <span class="tag-label">Booking Status:</span>
+                                <span class="tag-value badge" id="tag-booking">None</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- RAG Oncology Knowledge Base -->
+                    <div class="card rag-card">
+                        <div class="card-header">
+                            <h3><i class="fa-solid fa-database"></i> Oncology RAG Model Citations</h3>
+                        </div>
+                        <div class="rag-citations-container" id="rag-container">
+                            <div class="rag-empty">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <p>References from Dr. Bharat's custom RAG model will appear here dynamically when triggered by medical queries or booking details.</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Simulated APIs / Tool Executions -->
+                    <div class="card tools-card">
+                        <div class="card-header">
+                            <h3><i class="fa-solid fa-gears"></i> Backend Integrations & APIs</h3>
+                        </div>
+                        <div class="tools-execution-log" id="tools-log">
+                            <div class="tool-log-item">
+                                <span class="time">12:00</span>
+                                <span class="status success"><i class="fa-solid fa-check"></i> Connected</span>
+                                <span class="details">CRM Database and WhatsApp Broadcast API ready.</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                </div>
+                
+            </div>
+        </main>
+        
+    </div>
+    
+    <!-- Custom JS -->
+    <script src="/static/index.js"></script>
+</body>
+</html>
