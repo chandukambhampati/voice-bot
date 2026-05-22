@@ -60,7 +60,7 @@ class TTSService:
             for attempt in range(3):
                 try:
                     response = await self.client.audio.speech.create(
-                        model="tts-1",
+                        model="tts-1-hd",
                         voice=voice,
                         input=text
                     )

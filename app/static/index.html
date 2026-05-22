@@ -91,10 +91,10 @@
                 <div class="settings-group">
                     <label for="input-mode-select">Your Speech Input Mode</label>
                     <select id="input-mode-select" class="styled-select">
-                        <option value="speech_api" selected>Web Speech API — Recommended (en / hi / te)</option>
-                        <option value="mic_stream">Whisper AI Upload — Backup (any language)</option>
+                        <option value="mic_stream" selected>Whisper AI Upload — Dynamic Multilingual (Auto-Detects Any Language)</option>
+                        <option value="speech_api">Web Speech API — Locked to Dropdown Language</option>
                     </select>
-                    <span class="setting-help">Web Speech API works natively in Chrome for English, Hindi &amp; Telugu with zero latency. If mic is blocked, allow it in the address bar 🔒.</span>
+                    <span class="setting-help">Whisper AI automatically detects your language dynamically, allowing you to seamlessly mix Hindi, Telugu, and English.</span>
                 </div>
             </div>
 

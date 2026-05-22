@@ -218,9 +218,9 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
     sentence_count = 0
     citations = []
 
-    # Regex to split on sentence boundaries and commas
-    # (OpenAI TTS is fast and handles concurrent requests without stutter)
-    sentence_end_regex = re.compile(r'([.?!,:\n।]\s*)')
+    # Regex to split on full sentence boundaries ONLY
+    # (Generating audio piece-by-piece ruins prosody/intonation. Full sentences sound much more human)
+    sentence_end_regex = re.compile(r'([.?!।\n]\s*)')
 
     # Background tasks for TTS generation
     tts_tasks = []
