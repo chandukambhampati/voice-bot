@@ -23,6 +23,11 @@ let shouldDisconnect  = false;
 let holdMusicInterval = null;
 let holdAudioCtx      = null;
 
+// Ambient Noise
+let ambientAudioCtx  = null;
+let ambientNoiseNode = null;
+let ambientGain      = null;
+
 // Whisper fallback (mic_stream mode)
 let mediaRecorder   = null;
 let audioChunks     = [];
@@ -193,6 +198,7 @@ function endCall() {
     if (audioPlayer) { audioPlayer.pause(); audioPlayer = null; }
     stopListening();
     stopHoldMusic();
+    stopAmbientNoise();
     if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
     if (ws) { try { ws.close(); } catch(e) {} ws = null; }
     addToolLog("Call Engine", "action", "Call ended.");
@@ -211,6 +217,8 @@ function connectWebSocket() {
         addToolLog("WebSocket", "success", "Connected to AI server.");
         keyboardInput.removeAttribute("disabled");
         sendInputBtn.removeAttribute("disabled");
+        
+        startAmbientNoise();
 
         // Send initial config — bot generates dynamic greeting based on name + voice
         const leadName = document.getElementById("lead-name-input").value.trim();
@@ -439,6 +447,56 @@ function stopHoldMusic() {
     if (holdMusicInterval) {
         clearInterval(holdMusicInterval);
         holdMusicInterval = null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ambient Background Noise (HVAC/Room Tone simulation)
+// ---------------------------------------------------------------------------
+function startAmbientNoise() {
+    if (!ambientAudioCtx) {
+        ambientAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (ambientAudioCtx.state === 'suspended') ambientAudioCtx.resume();
+    if (ambientNoiseNode) return; // already playing
+
+    const bufferSize = 2 * ambientAudioCtx.sampleRate;
+    const noiseBuffer = ambientAudioCtx.createBuffer(1, bufferSize, ambientAudioCtx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    
+    // Generate Brown Noise (simulates HVAC / background hum)
+    let lastOut = 0;
+    for (let i = 0; i < bufferSize; i++) {
+        let white = Math.random() * 2 - 1;
+        output[i] = (lastOut + (0.02 * white)) / 1.02;
+        lastOut = output[i];
+        output[i] *= 3.5; 
+    }
+
+    ambientNoiseNode = ambientAudioCtx.createBufferSource();
+    ambientNoiseNode.buffer = noiseBuffer;
+    ambientNoiseNode.loop = true;
+
+    // Filter to make it sound like distant room hum
+    const filter = ambientAudioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 350; // Muffled rumble
+
+    ambientGain = ambientAudioCtx.createGain();
+    ambientGain.gain.value = 0.08; // Very subtle hum
+
+    ambientNoiseNode.connect(filter);
+    filter.connect(ambientGain);
+    ambientGain.connect(ambientAudioCtx.destination);
+    
+    ambientNoiseNode.start(0);
+}
+
+function stopAmbientNoise() {
+    if (ambientNoiseNode) {
+        try { ambientNoiseNode.stop(); } catch(e){}
+        ambientNoiseNode.disconnect();
+        ambientNoiseNode = null;
     }
 }
 
