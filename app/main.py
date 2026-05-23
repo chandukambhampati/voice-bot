@@ -97,14 +97,14 @@ async def websocket_endpoint(websocket: WebSocket):
         # Determine greeting language and phrasing based on voice_key and lead_name
         if voice_key.startswith("te"): # Telugu
             if lead_name:
-                initial_greeting = f"నమస్తే అండి, మీరు {lead_name} గారేనా మాట్లాడేది?"
+                initial_greeting = f"Namaste andi, meeru {lead_name} garena matladedi?"
             else:
-                initial_greeting = "నమస్తే అండి! అడ్వాన్స్డ్ క్యాన్సర్ సెంటర్ నుండి డాక్టర్ భరత్ పటోడియా గారి తరపున అంకుర్ మాట్లాడుతున్నానండి. నేను ఎవరితో మాట్లాడుతున్నానో తెలుసుకోవచ్చా అండి?"
+                initial_greeting = "Namaste andi! Advanced Cancer Center nundi Dr. Bharat Patodiya gari tarapuna Ankur matladutunnanandi. Nenu evaritho matladutunnano telusukovachha andi?"
         elif voice_key.startswith("hi"): # Hindi
             if lead_name:
-                initial_greeting = f"नमस्ते, क्या मैं {lead_name} जी से बात कर रहा हूँ?"
+                initial_greeting = f"Namaste, kya main {lead_name} ji se baat kar raha hoon?"
             else:
-                initial_greeting = "नमस्ते! मैं एडवांस्ड कैंसर सेंटर से डॉक्टर भरत पटोदिया जी की तरफ से अंकुर बोल रहा हूँ। क्या मैं आपका शुभ नाम जान सकता हूँ?"
+                initial_greeting = "Namaste! Main Advanced Cancer Center se Doctor Bharat Patodiya ji ki taraf se Ankur bol raha hoon. Kya main aapka shubh naam jaan sakta hoon?"
         else: # English
             if lead_name:
                 initial_greeting = f"Hello, is this Mr. {lead_name}?"
@@ -170,7 +170,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     user_text = await stt_service.transcribe_audio(
                         audio_bytes, filename=fname, language=lang_hint
                     )
-                    print(f"[{session_id}] Whisper transcript: {user_text!r}")
+                    try:
+                        print(f"[{session_id}] Whisper transcript: {user_text!r}")
+                    except UnicodeEncodeError:
+                        print(f"[{session_id}] Whisper transcript: [Unicode Text]")
 
                     if user_text.strip() and not user_text.startswith("[Error"):
                         await process_agent_turn(websocket, session_id, user_text, voice_key)
@@ -227,6 +230,9 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
 
     print(f"[{session_id}] Agent streaming response...")
 
+    tag_parsed = False
+    voice_key_dynamic = voice_key
+
     # 3. Process LLM token stream
     async for stream_event in agent.stream_turn(user_text, session["history"], session["stage"], session["tags"]):
         if stream_event["event"] == "citations":
@@ -238,6 +244,33 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
             chunk = stream_event["text"]
             full_response_text += chunk
             current_sentence_buffer += chunk
+
+            # Dynamic Language Voice Switching
+            if not tag_parsed:
+                if len(full_response_text) < 10 and "]" not in full_response_text:
+                    continue  # Buffer stream until tag is complete
+                
+                tag_match = re.match(r'^\[(EN|HI|TE)\]\s*', full_response_text)
+                if tag_match:
+                    lang = tag_match.group(1)
+                    # Determine target voice while preserving gender
+                    is_male = voice_key in ["en_prabhat", "hi_madhur", "te_mohan"]
+                    if lang == "TE":
+                        voice_key_dynamic = "te_mohan" if is_male else "te_shruti"
+                    elif lang == "HI":
+                        voice_key_dynamic = "hi_madhur" if is_male else "hi_swara"
+                    else:
+                        voice_key_dynamic = "en_prabhat" if is_male else "en_neerja"
+                    
+                    # Strip tag from outputs
+                    strip_len = tag_match.end()
+                    current_sentence_buffer = current_sentence_buffer[strip_len:]
+                    full_response_text = full_response_text[strip_len:]
+                    chunk = current_sentence_buffer  # The remaining text after the tag
+                
+                tag_parsed = True
+                if not chunk:
+                    continue
 
             # Send raw text chunk for "live typing" feel in UI
             await websocket.send_json({"event": "text_chunk", "text": chunk})
@@ -254,7 +287,7 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
                     # Fire off TTS generation in the background immediately
                     idx = sentence_count
                     task = asyncio.create_task(
-                        tts_service.generate_speech(complete_sentence, voice_key=voice_key)
+                        tts_service.generate_speech(complete_sentence, voice_key=voice_key_dynamic)
                     )
                     tts_tasks.append((idx, complete_sentence, task))
 

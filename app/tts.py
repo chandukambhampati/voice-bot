@@ -2,25 +2,21 @@ import os
 import asyncio
 import hashlib
 from pathlib import Path
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
+import edge_tts
 
-load_dotenv()
-
-# Map of friendly keys to OpenAI voices
-# OpenAI voices: alloy, echo, fable, onyx, nova, shimmer
+# Map of friendly keys to Microsoft Edge TTS (Azure Neural) voices
+# These voices natively support authentic Indian English, Hindi, and Telugu dialects
 VOICE_MAP = {
-    # English/Hindi
-    "en_neerja":  "nova",     # Female
-    "en_prabhat": "echo",     # Male
-    "hi_swara":   "nova",     # Female
-    "hi_madhur":  "echo",     # Male
-    "te_shruti":  "shimmer",  # Female
-    "te_mohan":   "onyx",     # Male
+    "en_neerja":  "en-IN-NeerjaNeural",
+    "en_prabhat": "en-IN-PrabhatNeural",
+    "hi_swara":   "hi-IN-SwaraNeural",
+    "hi_madhur":  "hi-IN-MadhurNeural",
+    "te_shruti":  "te-IN-ShrutiNeural",
+    "te_mohan":   "te-IN-MohanNeural",
     # Fallback language-code keys
-    "en": "nova",
-    "hi": "nova",
-    "te": "shimmer",
+    "en": "en-IN-NeerjaNeural",
+    "hi": "hi-IN-SwaraNeural",
+    "te": "te-IN-ShrutiNeural",
 }
 
 class TTSService:
@@ -31,9 +27,8 @@ class TTSService:
             self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Safe concurrency limit for OpenAI APIs
+        # Concurrency limit to prevent overwhelming the Edge TTS server
         self._semaphore = asyncio.Semaphore(4)
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def _get_voice(self, voice_key: str) -> str:
         return VOICE_MAP.get(voice_key, VOICE_MAP.get("en_neerja"))
@@ -44,7 +39,8 @@ class TTSService:
 
     async def generate_speech(self, text: str, voice_key: str = "en_neerja") -> str:
         """
-        Synthesize text → MP3 using OpenAI TTS-1 API for low latency.
+        Synthesize text → MP3 using Microsoft Edge TTS (Azure Neural Voices).
+        This guarantees authentic Indian accents and multi-lingual support.
         """
         text = text.strip()
         if not any(c.isalnum() for c in text):
@@ -59,13 +55,8 @@ class TTSService:
         async with self._semaphore:
             for attempt in range(3):
                 try:
-                    response = await self.client.audio.speech.create(
-                        model="tts-1-hd",
-                        voice=voice,
-                        input=text
-                    )
-                    
-                    response.stream_to_file(filepath)
+                    communicate = edge_tts.Communicate(text, voice)
+                    await communicate.save(str(filepath))
 
                     if filepath.exists() and filepath.stat().st_size > 0:
                         return f"/static/audio/{filepath.name}"
@@ -81,7 +72,6 @@ class TTSService:
     async def prewarm(self, voice_key: str = "en_neerja"):
         pass
 
-
 # CLI test
 if __name__ == "__main__":
     import sys
@@ -90,7 +80,7 @@ if __name__ == "__main__":
 
     async def test():
         tts = TTSService()
-        url = await tts.generate_speech("Hello, this is a test.", "en_neerja")
+        url = await tts.generate_speech("Hello, this is an authentic Indian voice.", "en_neerja")
         print(f"Saved to {url}")
 
     asyncio.run(test())

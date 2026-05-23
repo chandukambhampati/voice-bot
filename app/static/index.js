@@ -711,7 +711,6 @@ async function startMicRecording(voiceKey) {
                 ws.send(jsonPacket("audio_input", {
                     audio: b64,
                     voice_key: voiceKey,
-                    language_hint: langHint,
                     filename: fname
                 }));
             }
@@ -729,8 +728,8 @@ async function startMicRecording(voiceKey) {
     const dataArray    = new Uint8Array(analyser.frequencyBinCount);
     let hasSpoken      = false;
     let silenceStart   = null;
-    const THRESH       = 0.018;     // RMS threshold
-    const SILENCE_MS   = 500;       // 500ms silence → submit (fast VAD)
+    const THRESH       = 0.02;      // RMS threshold
+    const SILENCE_MS   = 1500;      // 1.5s silence → submit (prevents chopping words)
     const MAX_WAIT_MS  = 12000;     // 12s idle → restart
     const waitStart    = Date.now();
 

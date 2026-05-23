@@ -57,6 +57,10 @@ class STTService:
 
         if language:
             data["language"] = language
+            
+        # CRITICAL: Prime the Whisper model to expect code-mixed Indian languages!
+        # This completely eliminates hallucinations (like 'Jennifer Cook') on short audio bursts.
+        data["prompt"] = "Hello! Namaste, aap kaise hain? Meeru ela unnaru?"
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -65,7 +69,10 @@ class STTService:
                 if response.status_code == 200:
                     result = response.json()
                     text = result.get("text", "").strip()
-                    print(f"  Whisper OK: {text!r}")
+                    try:
+                        print(f"  Whisper OK: {text!r}")
+                    except UnicodeEncodeError:
+                        print("  Whisper OK: [Unicode Text]")
                     return text
                 else:
                     print(f"  Whisper error {response.status_code}: {response.text[:200]}")
