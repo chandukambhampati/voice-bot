@@ -26,3 +26,5 @@ Thumbs.db
 brain/
 scratch/
 tasks/
+*
+app/static/audio/*.mp3
