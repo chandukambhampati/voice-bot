@@ -1,0 +1,34 @@
+# Virtual environments
+.env
+.venv/
+venv/
+ENV/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Editor and system files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Gemini artifacts
+.gemini/
+brain/
+scratch/
+tasks/
+app/static/audio/*.mp3
+test.zip
+voice-bot-production.zip
+out.mp3
+test_out.raw
+test_ws_out.raw
