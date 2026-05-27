@@ -24,5 +24,6 @@ COPY . /app
 # Expose port 8080 for Cloud Run
 EXPOSE 8080
 
-# Run the application using the uv-managed virtual environment and bind to $PORT
-CMD ["sh", "-c", "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Run the application using uv run to automatically handle the virtual environment path
+# Using shell form to safely evaluate $PORT and avoid JSON-array CRLF issues
+CMD uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
