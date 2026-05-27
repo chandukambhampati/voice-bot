@@ -3,20 +3,16 @@ FROM python:3.12-slim
 
 # Set environment variables for Python
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    UV_SYSTEM_PYTHON=1
+    PYTHONDONTWRITEBYTECODE=1
 
 # Set the working directory
 WORKDIR /app
 
-# Install 'uv' for incredibly fast dependency resolution
-RUN pip install --no-cache-dir uv
+# Copy the requirements file
+COPY requirements.txt .
 
-# Copy only dependency files first to leverage Docker layer caching
-COPY pyproject.toml uv.lock ./
-
-# Install dependencies into a virtual environment using uv
-RUN uv sync --frozen --no-dev
+# Install dependencies globally using standard pip
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . /app
@@ -24,6 +20,5 @@ COPY . /app
 # Expose port 8080 for Cloud Run
 EXPOSE 8080
 
-# Run the application using uv run to automatically handle the virtual environment path
-# Using shell form to safely evaluate $PORT and avoid JSON-array CRLF issues
-CMD uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
+# Run the application (uvicorn is installed globally, so no venv path is needed)
+CMD python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
