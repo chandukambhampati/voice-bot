@@ -15,7 +15,8 @@ class BaseSTTProvider(ABC):
 
 class OpenAISTTProvider(BaseSTTProvider):
     def __init__(self):
-        self.client = AsyncOpenAI() # Uses OPENAI_API_KEY from environment
+        # Pass dummy key if missing to prevent instant crash on container startup
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy_key")) 
         print("Provider: OpenAI Whisper STT initialized.")
 
     async def transcribe_audio(

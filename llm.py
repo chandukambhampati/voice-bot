@@ -31,9 +31,7 @@ def load_mission_env() -> None:
 def require_openai_key() -> None:
     load_mission_env()
     if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError(
-            "OPENAI_API_KEY is missing. Set it before running this real-agent lab."
-        )
+        print("WARNING: OPENAI_API_KEY is missing. Please set it in your environment variables.")
     configure_observability()
 
 
@@ -66,4 +64,5 @@ def make_llm(temperature: float = 0) -> ChatOpenAI:
     return ChatOpenAI(
         model=model_name(),
         temperature=temperature,
+        api_key=os.getenv("OPENAI_API_KEY", "dummy"),
     )

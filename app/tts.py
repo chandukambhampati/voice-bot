@@ -49,7 +49,7 @@ class OpenAITTSProvider(BaseTTSProvider):
 
     def __init__(self, output_dir: Path):
         super().__init__(output_dir)
-        self.client = AsyncOpenAI() # Uses OPENAI_API_KEY
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy_key")) # Uses OPENAI_API_KEY
         print("Provider: OpenAI TTS initialized.")
 
     async def generate_speech(self, text: str, voice_key: str, target_wpm: int) -> AsyncGenerator[bytes, None]:
