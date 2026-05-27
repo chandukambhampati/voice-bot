@@ -29,6 +29,7 @@ agent = None
 tts_service = None
 stt_service = None
 emotion_service = None
+init_error = None
 try:
     agent = OncologyAgent()
     tts_service = TTSService(output_dir=str(audio_dir))
@@ -36,6 +37,7 @@ try:
     emotion_service = EmotionService()
 except Exception as e:
     print(f"FATAL INITIALIZATION ERROR: {e}")
+    init_error = traceback.format_exc()
     traceback.print_exc()
 
 # In-memory session store
@@ -58,7 +60,7 @@ async def startup_prewarm():
 async def get_index():
     """Serves the main frontend dashboard."""
     if not agent:
-        return {"error": "Server started but AI Services failed to initialize due to a fatal error. Check Cloud Run Logs for 'FATAL INITIALIZATION ERROR'."}
+        return {"error": "Server started but AI Services failed to initialize.", "traceback": init_error}
     
     index_path = static_dir / "index.html"
     if index_path.exists():
