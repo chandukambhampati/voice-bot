@@ -21,8 +21,8 @@ RUN uv sync --frozen --no-dev
 # Copy the rest of the application code
 COPY . /app
 
-# Expose port 8000 for the Uvicorn server
-EXPOSE 8000
+# Expose port 8080 for Cloud Run
+EXPOSE 8080
 
-# Run the application using the uv-managed virtual environment
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application using the uv-managed virtual environment and bind to $PORT
+CMD ["sh", "-c", "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

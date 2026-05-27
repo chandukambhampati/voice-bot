@@ -1,95 +1,77 @@
 import os
 import sys
-import httpx
+import io
+import time
 from pathlib import Path
+from openai import AsyncOpenAI
+from abc import ABC, abstractmethod
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from llm import load_mission_env
+class BaseSTTProvider(ABC):
+    @abstractmethod
+    async def transcribe_audio(self, audio_bytes: bytes, filename: str, language: str = None) -> tuple[str, int]:
+        pass
 
-
-# Map file extensions to correct MIME types for Whisper API
-_MIME_MAP = {
-    ".webm": "audio/webm",
-    ".ogg":  "audio/ogg",
-    ".mp3":  "audio/mpeg",
-    ".mp4":  "audio/mp4",
-    ".wav":  "audio/wav",
-    ".m4a":  "audio/mp4",
-}
-
-
-class STTService:
+class OpenAISTTProvider(BaseSTTProvider):
     def __init__(self):
-        load_mission_env()
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = "whisper-1"
+        self.client = AsyncOpenAI() # Uses OPENAI_API_KEY from environment
+        print("Provider: OpenAI Whisper STT initialized.")
 
     async def transcribe_audio(
         self,
         audio_bytes: bytes,
         filename: str = "audio.webm",
-        language: str = None,
-    ) -> str:
+        language: str = "hi", # default to Hindi for Indic context
+    ) -> tuple[str, int]:
         """
-        Transcribes audio bytes using OpenAI Whisper API.
-        - filename must carry the correct extension (.webm/.wav/.ogg) so Whisper
-          can auto-detect the codec.
-        - language: ISO-639-1 code ('te', 'hi', 'en') improves Indic accuracy.
+        Transcribes audio bytes using local faster-whisper.
+        Returns a tuple: (transcript_text, words_per_minute)
         """
-        if not self.api_key:
-            print("Warning: OPENAI_API_KEY is not set.")
-            return "[Error: API key missing]"
-
         if len(audio_bytes) < 1000:
-            # Too short to be real speech — avoid wasting an API call
-            return ""
-
-        ext = Path(filename).suffix.lower()
-        mime = _MIME_MAP.get(ext, "audio/webm")
-
-        url = "https://api.openai.com/v1/audio/transcriptions"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-
-        # Whisper requires the filename extension to be correct for codec detection
-        files = {"file": (filename, audio_bytes, mime)}
-        data  = {"model": self.model, "response_format": "json"}
-
-        if language:
-            data["language"] = language
-            
-        # CRITICAL: Prime the Whisper model to expect code-mixed Indian languages!
-        # This completely eliminates hallucinations (like 'Jennifer Cook') on short audio bursts.
-        data["prompt"] = "Hello! Namaste, aap kaise hain? Meeru ela unnaru?"
+            return "", 0
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, headers=headers, files=files, data=data)
-
-                if response.status_code == 200:
-                    result = response.json()
-                    text = result.get("text", "").strip()
-                    try:
-                        print(f"  Whisper OK: {text!r}")
-                    except UnicodeEncodeError:
-                        print("  Whisper OK: [Unicode Text]")
-                    return text
-                else:
-                    print(f"  Whisper error {response.status_code}: {response.text[:200]}")
-                    return f"[Error transcribing: {response.status_code}]"
-
-        except httpx.TimeoutException:
-            print("  Whisper timeout.")
-            return "[Error: Whisper timeout — please speak again]"
+            start_time = time.time()
+            # OpenAI requires a filename to determine the format. We'll pass it as a tuple.
+            file_tuple = (filename, audio_bytes, "audio/webm" if "webm" in filename else "audio/wav")
+            
+            # Request verbose_json to get segment durations to calculate WPM
+            response = await self.client.audio.transcriptions.create(
+                model="whisper-1",
+                file=file_tuple,
+                response_format="verbose_json"
+            )
+            
+            transcript = response.text.strip()
+            word_count = len(transcript.split())
+            audio_duration = response.duration if hasattr(response, 'duration') and response.duration else 0.0
+            
+            wpm = 0
+            if audio_duration > 0:
+                wpm = int((word_count / audio_duration) * 60)
+            
+            print(f"  OpenAI Whisper OK: {transcript!r} (WPM: {wpm}) in {time.time() - start_time:.2f}s")
+            return transcript, wpm
+            
         except Exception as e:
-            print(f"  Whisper exception: {e}")
-            return f"[Error: {str(e)}]"
+            import traceback
+            print(f"  OpenAI STT exception: {e}")
+            traceback.print_exc()
+            return f"[Error: {str(e)}]", 0
 
+class STTService:
+    def __init__(self):
+        # We can add SarvamSTTProvider here later if needed
+        self.provider = OpenAISTTProvider()
+
+    async def transcribe_audio(self, audio_bytes: bytes, filename: str, language: str = None) -> tuple[str, int]:
+        return await self.provider.transcribe_audio(audio_bytes, filename, language)
 
 # Basic test
 if __name__ == "__main__":
     import asyncio
     async def test():
         stt = STTService()
-        print("Whisper STT service initialized. API Key:", "OK" if stt.api_key else "MISSING")
+        print("Local STT service initialized.")
     asyncio.run(test())

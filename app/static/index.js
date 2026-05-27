@@ -181,6 +181,13 @@ function startCall() {
     callStatusText.classList.add("active");
     avatar.classList.add("pulsing");
     transcriptContainer.innerHTML = "";
+    
+    // Initialize AudioContext during user gesture to avoid browser autoplay blocks
+    if (!pcmContext) {
+        pcmContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    }
+    if (pcmContext.state === 'suspended') pcmContext.resume();
+    
     addToolLog("API", "action", "Initiating WebSocket connection to AI server...");
     connectWebSocket();
 }
@@ -226,9 +233,30 @@ function connectWebSocket() {
         ws.send(JSON.stringify({ event: "start", lead_name: leadName, voice_key: voiceKey }));
     };
 
-    ws.onmessage = (event) => {
-        try { handleServerMessage(JSON.parse(event.data)); }
-        catch(e) { console.error("Bad message from server:", e); }
+    let pcmDataBuffer = new Uint8Array(0);
+
+    ws.onmessage = async (event) => {
+        if (typeof event.data === "string") {
+            try { handleServerMessage(JSON.parse(event.data)); }
+            catch(e) { console.error("Bad message from server:", e); }
+        } else if (event.data instanceof Blob) {
+            // Binary audio chunk (PCM 16-bit)
+            const arrayBuffer = await event.data.arrayBuffer();
+            
+            // Append to buffer
+            let tmp = new Uint8Array(pcmDataBuffer.length + arrayBuffer.byteLength);
+            tmp.set(pcmDataBuffer, 0);
+            tmp.set(new Uint8Array(arrayBuffer), pcmDataBuffer.length);
+            pcmDataBuffer = tmp;
+
+            // Process even bytes
+            let evenBytes = pcmDataBuffer.length - (pcmDataBuffer.length % 2);
+            if (evenBytes > 0) {
+                let chunkToProcess = pcmDataBuffer.buffer.slice(0, evenBytes);
+                pcmDataBuffer = new Uint8Array(pcmDataBuffer.buffer.slice(evenBytes));
+                playPCMChunk(chunkToProcess);
+            }
+        }
     };
 
     ws.onerror = () => {
@@ -335,7 +363,7 @@ function handleServerMessage(message) {
     } else if (event === "stt_error") {
         isProcessing = false;
         if (message.error) addToolLog("STT", "action", message.error);
-        if (isCallActive && !isSpeaking) {
+        if (isCallActive) {
             callStatusText.textContent = "Listening...";
             startListening();
         }
@@ -345,6 +373,85 @@ function handleServerMessage(message) {
 // ---------------------------------------------------------------------------
 // Audio Playback — queues sentences and gaplessly plays them
 // ---------------------------------------------------------------------------
+let pcmContext = null;
+let nextPlayTime = 0;
+
+function interruptAudio() {
+    if (audioPlayer) {
+        audioPlayer.pause();
+    }
+    // Also reset PCM playback
+    if (pcmContext) {
+        pcmContext.close();
+        pcmContext = null;
+    }
+    nextPlayTime = 0;
+    
+    audioQueue = [];
+    isAudioPlaying = false;
+    isSpeaking = false;
+    streamEnded = false;
+    visualizerContainer.classList.remove("playing");
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ event: "interrupt" }));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Real-time PCM streaming playback (Sarvam WebSockets)
+// ---------------------------------------------------------------------------
+function playPCMChunk(buffer) {
+    if (!pcmContext) {
+        // Fallback if not initialized
+        pcmContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    }
+    
+    // Resume context if suspended (browser policy)
+    if (pcmContext.state === 'suspended') pcmContext.resume();
+    
+    // Reset nextPlayTime if it's lagging behind current time
+    if (nextPlayTime < pcmContext.currentTime) {
+        nextPlayTime = pcmContext.currentTime;
+    }
+
+    // Data is Int16 (2 bytes per sample) -> convert to Float32 [-1.0, 1.0]
+    const int16Array = new Int16Array(buffer);
+    const audioBuffer = pcmContext.createBuffer(1, int16Array.length, 24000);
+    const float32Array = audioBuffer.getChannelData(0);
+    
+    for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768.0;
+    }
+
+    const source = pcmContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(pcmContext.destination);
+
+    // Schedule playback seamlessly
+    const startTime = Math.max(pcmContext.currentTime, nextPlayTime);
+    source.start(startTime);
+    nextPlayTime = startTime + audioBuffer.duration;
+
+    isAudioPlaying = true;
+    isSpeaking = true;
+    callStatusText.textContent = "Speaking...";
+    visualizerContainer.classList.add("playing");
+
+    // When the queue is fully drained, clean up
+    source.onended = () => {
+        if (pcmContext && pcmContext.currentTime >= nextPlayTime - 0.05) {
+            isAudioPlaying = false;
+            isSpeaking = false;
+            visualizerContainer.classList.remove("playing");
+            if (isCallActive && !isProcessing) {
+                callStatusText.textContent = "Listening...";
+                // startListening(); // Removed to allow open mic barge-in
+            }
+        }
+    };
+}
+
+// Legacy function for standard audio URLs
 function playAgentAudio(url) {
     audioQueue.push(url);
     if (!isAudioPlaying) {
@@ -363,7 +470,7 @@ function playNextAudio() {
     const url = audioQueue.shift();
     isAudioPlaying = true;
     
-    stopListening();  // Mute mic while bot speaks (prevents echo loop)
+    // We intentionally DO NOT stop listening here anymore, to allow Barge-in (Interruption).
     isSpeaking = true;
     callStatusText.textContent = "Speaking...";
     visualizerContainer.classList.add("playing");
@@ -572,7 +679,7 @@ function startWebSpeechRecognition(voiceKey) {
 
     // Show interim results in the status bar for visual feedback
     recognizer.onresult = (event) => {
-        if (!isCallActive || isSpeaking || isProcessing) return;
+        if (!isCallActive || isProcessing) return;
 
         let interimTranscript = "";
         let finalTranscript   = "";
@@ -593,8 +700,13 @@ function startWebSpeechRecognition(voiceKey) {
 
         // Only send final transcripts to the agent
         if (finalTranscript.trim()) {
+            // Ignore tiny echo blips if bot is speaking. Only interrupt for intentional phrases.
+            if (isSpeaking) {
+                if (finalTranscript.trim().length < 5) return;
+                interruptAudio();
+            }
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(jsonPacket("text_input", { text: finalTranscript.trim(), voice_key: voiceKey }));
+                ws.send(JSON.stringify({ event: "text_input", text: finalTranscript.trim(), voice_key: voiceKey }));
             }
         }
     };
@@ -707,8 +819,11 @@ async function startMicRecording(voiceKey) {
             const ext  = mimeType.includes("webm") ? "webm" : "ogg";
             const fname = `audio.${ext}`;
 
+            if (isSpeaking) interruptAudio();
+
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(jsonPacket("audio_input", {
+                ws.send(JSON.stringify({
+                    event: "audio_input",
                     audio: b64,
                     voice_key: voiceKey,
                     filename: fname
@@ -734,7 +849,7 @@ async function startMicRecording(voiceKey) {
     const waitStart    = Date.now();
 
     vadInterval = setInterval(() => {
-        if (!isCallActive || isSpeaking || isProcessing) {
+        if (!isCallActive || isProcessing) {
             clearInterval(vadInterval); vadInterval = null; return;
         }
         analyser.getByteTimeDomainData(dataArray);
@@ -749,6 +864,7 @@ async function startMicRecording(voiceKey) {
             hasSpoken    = true;
             silenceStart = null;
             callStatusText.textContent = "Recording...";
+            if (isSpeaking) interruptAudio();
         } else if (hasSpoken) {
             if (!silenceStart) { silenceStart = Date.now(); return; }
             if (Date.now() - silenceStart > SILENCE_MS) {
