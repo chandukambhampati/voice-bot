@@ -11,6 +11,7 @@ from pathlib import Path
 from app.agent import OncologyAgent
 from app.tts import TTSService
 from app.stt import STTService
+from app.emotion import EmotionService
 
 app = FastAPI(title="Oncology Voice Bot App - Dr. Bharat Patodiya")
 
@@ -27,6 +28,7 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 agent = OncologyAgent()
 tts_service = TTSService(output_dir=str(audio_dir))
 stt_service = STTService()
+emotion_service = EmotionService()
 
 # In-memory session store
 sessions = {}
@@ -81,6 +83,9 @@ async def websocket_endpoint(websocket: WebSocket):
     
     print(f"New browser connection: {session_id}")
     
+    # Track the active agent task for interruption
+    active_tasks = {}
+    
     try:
         # Wait for the first message (start/config) from client
         data = await websocket.receive_text()
@@ -113,16 +118,24 @@ async def websocket_endpoint(websocket: WebSocket):
                 
         sessions[session_id]["history"].append({"role": "assistant", "content": initial_greeting})
         
-        # Generate initial TTS
-        audio_url = await tts_service.generate_speech(initial_greeting, voice_key=voice_key)
-        
-        await websocket.send_json({
-            "event": "greeting",
-            "text": initial_greeting,
-            "audio_url": audio_url,
-            "stage": "G",
-            "tags": sessions[session_id]["tags"]
-        })
+        # Generate and send the initial greeting audio
+        try:
+            mp3_data = bytearray()
+            async for chunk in tts_service.generate_speech(initial_greeting, voice_key=voice_key):
+                mp3_data.extend(chunk)
+            
+            b64_audio = base64.b64encode(mp3_data).decode('utf-8')
+            audio_url = f"data:audio/mp3;base64,{b64_audio}"
+            
+            await websocket.send_json({
+                "event": "greeting",
+                "text": initial_greeting,
+                "audio_url": audio_url,
+                "stage": "G",
+                "tags": sessions[session_id]["tags"]
+            })
+        except Exception as e:
+            print(f"[{session_id}] Greeting TTS error: {e}")
         
         # 2. Main communication loop — per-message error isolation prevents single bad
         #    packets from killing the entire WebSocket connection.
@@ -142,11 +155,21 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 event = message.get("event")
 
+                if event == "interrupt":
+                    print(f"[{session_id}] Received INTERRUPT signal. Cancelling active tasks.")
+                    if session_id in active_tasks:
+                        active_tasks[session_id].cancel()
+                        del active_tasks[session_id]
+                    continue
+
                 if event == "text_input":
                     user_text = message.get("text", "").strip()
                     voice_key = message.get("voice_key", "en_neerja")
                     if user_text:
-                        await process_agent_turn(websocket, session_id, user_text, voice_key)
+                        if session_id in active_tasks:
+                            active_tasks[session_id].cancel()
+                        task = asyncio.create_task(process_agent_turn(websocket, session_id, user_text, voice_key, "auto", 150))
+                        active_tasks[session_id] = task
 
                 elif event == "audio_input":
                     audio_b64   = message.get("audio", "")
@@ -167,16 +190,20 @@ async def websocket_endpoint(websocket: WebSocket):
                         "input_audio.webm" if voice_key.startswith(("te", "hi")) else "input_audio.wav"
                     )
                     print(f"[{session_id}] STT start — lang={lang_hint}, file={fname}, size={len(audio_bytes)}B")
-                    user_text = await stt_service.transcribe_audio(
-                        audio_bytes, filename=fname, language=lang_hint
-                    )
                     try:
-                        print(f"[{session_id}] Whisper transcript: {user_text!r}")
-                    except UnicodeEncodeError:
-                        print(f"[{session_id}] Whisper transcript: [Unicode Text]")
+                        user_text, wpm = await stt_service.transcribe_audio(
+                            audio_bytes, filename=fname, language=lang_hint
+                        )
+                        print(f"[{session_id}] OpenAI STT transcript: {user_text!r}")
+                    except Exception as e:
+                        print(f"[{session_id}] STT error: {e}")
+                        user_text, wpm = f"[Error: {e}]", 0
 
                     if user_text.strip() and not user_text.startswith("[Error"):
-                        await process_agent_turn(websocket, session_id, user_text, voice_key)
+                        if session_id in active_tasks:
+                            active_tasks[session_id].cancel()
+                        task = asyncio.create_task(process_agent_turn(websocket, session_id, user_text, voice_key, "auto", wpm))
+                        active_tasks[session_id] = task
                     else:
                         err = user_text if user_text.startswith("[Error") else ""
                         await websocket.send_json({"event": "stt_error", "error": err})
@@ -205,136 +232,130 @@ async def websocket_endpoint(websocket: WebSocket):
 
 import re
 
-async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: str, voice_key: str):
-    """Process one agent turn using a fast, streaming pipeline."""
-    session = sessions[session_id]
-
-    # 1. Append user message
-    session["history"].append({"role": "user", "content": user_text})
-
-    # 2. Echo transcript + indicate start
-    await websocket.send_json({"event": "user_transcript", "text": user_text})
+async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: str, voice_key: str, emotion: str = "calm", wpm: int = 150):
+    global sessions
+    state = sessions[session_id]
+    
+    # Send processing status
+    await websocket.send_json({"event": "processing"})
+    print(f"[{session_id}] Agent streaming response...")
+    
     await websocket.send_json({"event": "stream_start"})
-
-    full_response_text = ""
+    
     current_sentence_buffer = ""
     sentence_count = 0
-    citations = []
-
-    # Regex to split on full sentence boundaries ONLY
-    # (Generating audio piece-by-piece ruins prosody/intonation. Full sentences sound much more human)
+    
+    # Audio Pipeline
+    sentence_queue = asyncio.Queue()
+    
+    async def tts_consumer():
+        try:
+            while True:
+                item = await sentence_queue.get()
+                if item is None:
+                    break
+                sentence, vk, w_pm = item
+                
+                mp3_data = bytearray()
+                async for chunk in tts_service.generate_speech(sentence, voice_key=vk, target_wpm=w_pm):
+                    if asyncio.current_task().cancelled():
+                        return
+                    mp3_data.extend(chunk)
+                
+                if mp3_data:
+                    b64_audio = base64.b64encode(mp3_data).decode('utf-8')
+                    audio_url = f"data:audio/mp3;base64,{b64_audio}"
+                    await websocket.send_json({"event": "audio_sentence", "audio_url": audio_url})
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"tts_consumer error: {e}")
+            
+    tts_task = asyncio.create_task(tts_consumer())
+    
     sentence_end_regex = re.compile(r'([.?!।\n]\s*)')
+    try:
+        full_response_text = ""
+        current_sentence = ""
+        dynamic_voice_key = voice_key
+        buffer = ""
+        tag_extracted = False
 
-    # Background tasks for TTS generation
-    tts_tasks = []
-
-    print(f"[{session_id}] Agent streaming response...")
-
-    tag_parsed = False
-    voice_key_dynamic = voice_key
-
-    # 3. Process LLM token stream
-    async for stream_event in agent.stream_turn(user_text, session["history"], session["stage"], session["tags"]):
-        if stream_event["event"] == "citations":
-            citations = stream_event["citations"]
-            if citations:
-                await websocket.send_json({"event": "citations", "citations": citations})
-        
-        elif stream_event["event"] == "text_chunk":
-            chunk = stream_event["text"]
-            full_response_text += chunk
-            current_sentence_buffer += chunk
-
-            # Dynamic Language Voice Switching
-            if not tag_parsed:
-                if len(full_response_text) < 10 and "]" not in full_response_text:
-                    continue  # Buffer stream until tag is complete
+        async for chunk in agent.stream_turn(user_text, state["history"], state["stage"], state["tags"], emotion, wpm):
+            if chunk["event"] == "citations":
+                await websocket.send_json(chunk)
+            elif chunk["event"] == "text_chunk":
+                t = chunk["text"]
                 
-                tag_match = re.match(r'^\[(EN|HI|TE)\]\s*', full_response_text)
-                if tag_match:
-                    lang = tag_match.group(1)
-                    # Determine target voice while preserving gender
-                    is_male = voice_key in ["en_prabhat", "hi_madhur", "te_mohan"]
-                    if lang == "TE":
-                        voice_key_dynamic = "te_mohan" if is_male else "te_shruti"
-                    elif lang == "HI":
-                        voice_key_dynamic = "hi_madhur" if is_male else "hi_swara"
-                    else:
-                        voice_key_dynamic = "en_prabhat" if is_male else "en_neerja"
-                    
-                    # Strip tag from outputs
-                    strip_len = tag_match.end()
-                    current_sentence_buffer = current_sentence_buffer[strip_len:]
-                    full_response_text = full_response_text[strip_len:]
-                    chunk = current_sentence_buffer  # The remaining text after the tag
-                
-                tag_parsed = True
-                if not chunk:
+                if not tag_extracted:
+                    buffer += t
+                    if "]" in buffer:
+                        tag_extracted = True
+                        match = re.search(r'\[LANG:(EN|HI|TE)\]', buffer, re.IGNORECASE)
+                        if match:
+                            lang = match.group(1).upper()
+                            if lang == 'TE': dynamic_voice_key = "te_shruti"
+                            elif lang == 'HI': dynamic_voice_key = "hi_swara"
+                            elif lang == 'EN': dynamic_voice_key = "en_neerja"
+                        
+                        clean_text = re.sub(r'\[.*?\]', '', buffer).lstrip()
+                        full_response_text += clean_text
+                        current_sentence += clean_text
+                        if clean_text:
+                            await websocket.send_json({"event": "text_chunk", "text": clean_text})
+                    elif len(buffer) > 15:
+                        tag_extracted = True
+                        full_response_text += buffer
+                        current_sentence += buffer
+                        await websocket.send_json({"event": "text_chunk", "text": buffer})
                     continue
 
-            # Send raw text chunk for "live typing" feel in UI
-            await websocket.send_json({"event": "text_chunk", "text": chunk})
+                full_response_text += t
+                current_sentence += t
+                await websocket.send_json({"event": "text_chunk", "text": t})
+                
+                if any(p in current_sentence for p in ['. ', '? ', '! ', '\n']):
+                    sentences = re.split(r'(?<=[.?!])\s+|\n+', current_sentence)
+                    complete_sentence = sentences[0].strip()
+                    if complete_sentence:
+                        await sentence_queue.put((complete_sentence, dynamic_voice_key, wpm))
+                        current_sentence = ' '.join(sentences[1:])
+            
+            if asyncio.current_task().cancelled():
+                tts_task.cancel()
+                return
 
-            # Check if buffer contains a complete sentence
-            match = sentence_end_regex.search(current_sentence_buffer)
-            if match:
-                end_pos = match.end()
-                complete_sentence = current_sentence_buffer[:end_pos].strip()
-                current_sentence_buffer = current_sentence_buffer[end_pos:]
+    except Exception as e:
+        print(f"[{session_id}] agent turn error: {e}")
+        traceback.print_exc()
+    finally:
+        # Push any remaining text as the last sentence
+        if current_sentence.strip():
+            await sentence_queue.put((current_sentence.strip(), dynamic_voice_key, wpm))
+        
+        # Signal consumer to stop and wait for it
+        await sentence_queue.put(None)
+        await tts_task
 
-                if complete_sentence:
-                    sentence_count += 1
-                    # Fire off TTS generation in the background immediately
-                    idx = sentence_count
-                    task = asyncio.create_task(
-                        tts_service.generate_speech(complete_sentence, voice_key=voice_key_dynamic)
-                    )
-                    tts_tasks.append((idx, complete_sentence, task))
-
-    # Handle any remaining text in buffer
-    if current_sentence_buffer.strip():
-        sentence_count += 1
-        idx = sentence_count
-        complete_sentence = current_sentence_buffer.strip()
-        task = asyncio.create_task(
-            tts_service.generate_speech(complete_sentence, voice_key=voice_key)
-        )
-        tts_tasks.append((idx, complete_sentence, task))
-
-    # 4. Stream generated audio chunks as they finish
-    # We await them in order so the audio plays sequentially
-    for idx, sentence_text, task in tts_tasks:
-        try:
-            audio_url = await task
-            if audio_url:
-                await websocket.send_json({
-                    "event": "audio_sentence",
-                    "audio_url": audio_url,
-                    "sentence_idx": idx,
-                    "is_last": (idx == sentence_count)
-                })
-        except Exception as e:
-            print(f"[{session_id}] TTS chunk error: {e}")
-
-    session["history"].append({"role": "assistant", "content": full_response_text})
+        state["history"].append({"role": "assistant", "content": full_response_text})
 
     # 5. Finalize conversational turn immediately so frontend mic unlocks
     await websocket.send_json({
         "event": "stream_end",
-        "stage": session["stage"],
-        "tags": session["tags"]
+        "stage": state["stage"],
+        "tags": state["tags"]
     })
     print(f"[{session_id}] Streaming complete. Voice unlocked.")
 
     # 6. Extract CRM tags entirely in the background so it never blocks the UI
     async def background_update_tags():
         try:
-            state_result = await agent.update_state(session["history"], session["stage"], session["tags"])
-            new_stage = state_result.get("call_stage", session["stage"])
-            new_tags = state_result.get("crm_tags", session["tags"])
+            state_result = await agent.update_state(state["history"], state["stage"], state["tags"])
+            new_stage = state_result.get("call_stage", state["stage"])
+            new_tags = state_result.get("crm_tags", state["tags"])
             
-            session["stage"] = new_stage
-            session["tags"] = new_tags
+            state["stage"] = new_stage
+            state["tags"] = new_tags
             
             # Send stealth update to UI
             await websocket.send_json({
