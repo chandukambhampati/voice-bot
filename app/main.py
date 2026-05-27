@@ -24,11 +24,19 @@ audio_dir.mkdir(parents=True, exist_ok=True)
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-# Initialize services
-agent = OncologyAgent()
-tts_service = TTSService(output_dir=str(audio_dir))
-stt_service = STTService()
-emotion_service = EmotionService()
+# Initialize services globally but handle exceptions so Uvicorn boots successfully
+agent = None
+tts_service = None
+stt_service = None
+emotion_service = None
+try:
+    agent = OncologyAgent()
+    tts_service = TTSService(output_dir=str(audio_dir))
+    stt_service = STTService()
+    emotion_service = EmotionService()
+except Exception as e:
+    print(f"FATAL INITIALIZATION ERROR: {e}")
+    traceback.print_exc()
 
 # In-memory session store
 sessions = {}
@@ -37,17 +45,21 @@ sessions = {}
 async def startup_prewarm():
     """Pre-warm TTS voices so the first caller doesn't wait for cold-start synthesis."""
     import asyncio
-    print("Prewarming TTS voices...")
-    await asyncio.gather(
-        tts_service.prewarm("en_neerja"),
-        tts_service.prewarm("hi_swara"),
-        tts_service.prewarm("te_shruti"),
-    )
-    print("TTS prewarm complete.")
+    if tts_service:
+        print("Prewarming TTS voices...")
+        await asyncio.gather(
+            tts_service.prewarm("en_neerja"),
+            tts_service.prewarm("hi_swara"),
+            tts_service.prewarm("te_shruti"),
+        )
+        print("TTS prewarm complete.")
 
 @app.get("/")
 async def get_index():
     """Serves the main frontend dashboard."""
+    if not agent:
+        return {"error": "Server started but AI Services failed to initialize due to a fatal error. Check Cloud Run Logs for 'FATAL INITIALIZATION ERROR'."}
+    
     index_path = static_dir / "index.html"
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))

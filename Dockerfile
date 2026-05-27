@@ -20,5 +20,5 @@ COPY . /app
 # Expose port 8080 for Cloud Run
 EXPOSE 8080
 
-# Run the application (uvicorn is installed globally, so no venv path is needed)
-CMD python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
+# Run the application using the JSON array syntax to bypass any shell expansion quirks
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
