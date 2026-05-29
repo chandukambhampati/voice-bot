@@ -134,20 +134,16 @@ async def websocket_endpoint(websocket: WebSocket):
         
         # Generate and send the initial greeting audio
         try:
-            mp3_data = bytearray()
-            async for chunk in tts_service.generate_speech(initial_greeting, voice_key=voice_key):
-                mp3_data.extend(chunk)
-            
-            b64_audio = base64.b64encode(mp3_data).decode('utf-8')
-            audio_url = f"data:audio/mp3;base64,{b64_audio}"
-            
             await websocket.send_json({
                 "event": "greeting",
                 "text": initial_greeting,
-                "audio_url": audio_url,
                 "stage": "G",
                 "tags": sessions[session_id]["tags"]
             })
+            
+            async for chunk in tts_service.generate_speech(initial_greeting, voice_key=voice_key):
+                await websocket.send_bytes(chunk)
+                
         except Exception as e:
             print(f"[{session_id}] Greeting TTS error: {e}")
         
@@ -270,16 +266,10 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
                     break
                 sentence, vk, w_pm = item
                 
-                mp3_data = bytearray()
                 async for chunk in tts_service.generate_speech(sentence, voice_key=vk, target_wpm=w_pm):
                     if asyncio.current_task().cancelled():
                         return
-                    mp3_data.extend(chunk)
-                
-                if mp3_data:
-                    b64_audio = base64.b64encode(mp3_data).decode('utf-8')
-                    audio_url = f"data:audio/mp3;base64,{b64_audio}"
-                    await websocket.send_json({"event": "audio_sentence", "audio_url": audio_url})
+                    await websocket.send_bytes(chunk)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -328,8 +318,8 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
                 current_sentence += t
                 await websocket.send_json({"event": "text_chunk", "text": t})
                 
-                if any(p in current_sentence for p in ['. ', '? ', '! ', '\n']):
-                    sentences = re.split(r'(?<=[.?!])\s+|\n+', current_sentence)
+                if any(p in current_sentence for p in ['. ', '? ', '! ', ', ', '; ', '\n']):
+                    sentences = re.split(r'(?<=[.?!,;])\s+|\n+', current_sentence)
                     complete_sentence = sentences[0].strip()
                     if complete_sentence:
                         await sentence_queue.put((complete_sentence, dynamic_voice_key, wpm))

@@ -57,16 +57,16 @@ class OpenAITTSProvider(BaseTTSProvider):
         speed_scale = max(0.8, min(target_wpm / 150.0, 1.25))
 
         try:
-            response = await self.client.audio.speech.create(
+            async with self.client.audio.speech.with_streaming_response.create(
                 model="tts-1",
                 voice=voice_model,
                 input=text,
                 response_format="pcm", # We need raw PCM for the frontend PCM player
                 speed=speed_scale
-            )
-            # OpenAI API returns raw bytes in chunks. We yield them.
-            for chunk in response.iter_bytes():
-                yield chunk
+            ) as response:
+                # OpenAI API returns raw bytes in chunks. We yield them.
+                async for chunk in response.iter_bytes():
+                    yield chunk
         except Exception as e:
             print(f"  OpenAI TTS error: {e}")
 
