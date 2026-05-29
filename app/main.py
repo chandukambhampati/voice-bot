@@ -302,28 +302,25 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
                             elif lang == 'HI': dynamic_voice_key = "hi_swara"
                             elif lang == 'EN': dynamic_voice_key = "en_neerja"
                         
-                        clean_text = re.sub(r'\[.*?\]', '', buffer).lstrip()
-                        full_response_text += clean_text
-                        current_sentence += clean_text
-                        if clean_text:
-                            await websocket.send_json({"event": "text_chunk", "text": clean_text})
+                        t = re.sub(r'\[.*?\]', '', buffer).lstrip()
+                        # Do not continue here, let it fall through to be processed
                     elif len(buffer) > 15:
                         tag_extracted = True
-                        full_response_text += buffer
-                        current_sentence += buffer
-                        await websocket.send_json({"event": "text_chunk", "text": buffer})
-                    continue
+                        t = buffer
+                    else:
+                        continue # wait for more characters to find the tag
 
-                full_response_text += t
-                current_sentence += t
-                await websocket.send_json({"event": "text_chunk", "text": t})
-                
-                if any(p in current_sentence for p in ['. ', '? ', '! ', ', ', '; ', '\n']):
-                    sentences = re.split(r'(?<=[.?!,;])\s+|\n+', current_sentence)
-                    complete_sentence = sentences[0].strip()
-                    if complete_sentence:
-                        await sentence_queue.put((complete_sentence, dynamic_voice_key, wpm))
-                        current_sentence = ' '.join(sentences[1:])
+                if t:
+                    full_response_text += t
+                    current_sentence += t
+                    await websocket.send_json({"event": "text_chunk", "text": t})
+                    
+                    if any(p in current_sentence for p in ['. ', '? ', '! ', ', ', '; ', '\n']):
+                        sentences = re.split(r'(?<=[.?!,;])\s+|\n+', current_sentence)
+                        complete_sentence = sentences[0].strip()
+                        if complete_sentence:
+                            await sentence_queue.put((complete_sentence, dynamic_voice_key, wpm))
+                            current_sentence = ' '.join(sentences[1:])
             
             if asyncio.current_task().cancelled():
                 tts_task.cancel()
