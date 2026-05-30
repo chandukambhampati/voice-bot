@@ -810,6 +810,8 @@ async function startMicRecording(voiceKey) {
     if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/webm";
     if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/ogg;codecs=opus";
     if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/ogg";
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/mp4"; // iOS Safari
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = ""; // Browser default
 
     mediaRecorder = new MediaRecorder(userMediaStream, { mimeType });
     audioChunks   = [];
@@ -873,7 +875,7 @@ async function startMicRecording(voiceKey) {
     const dataArray    = new Uint8Array(analyser.frequencyBinCount);
     let hasSpoken      = false;
     let silenceStart   = null;
-    const THRESH       = 0.04;      // Increased RMS threshold to ignore background noise
+    const THRESH       = 0.025;     // Lowered threshold so quiet microphones are recognized
     const SILENCE_MS   = 600;       // Reduced to 600ms for zero latency feel!
     const MAX_WAIT_MS  = 12000;     // 12s idle → restart
     const waitStart    = Date.now();
