@@ -8,8 +8,14 @@ ENV PYTHONUNBUFFERED=1 \
 # Set the working directory
 WORKDIR /app
 
+# Install system dependencies (ffmpeg is REQUIRED for Whisper and Torchaudio)
+RUN apt-get update && apt-get install -y ffmpeg git build-essential && rm -rf /var/lib/apt/lists/*
+
 # Copy the requirements file
 COPY requirements.txt .
+
+# Pre-install PyTorch CPU-only version first so Cloud Build doesn't OOM downloading 3GB CUDA drivers
+RUN pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Install dependencies globally using standard pip
 RUN pip install --no-cache-dir -r requirements.txt

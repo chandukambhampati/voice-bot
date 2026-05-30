@@ -18,6 +18,7 @@ let isProcessing    = false;
 let audioQueue        = [];
 let isAudioPlaying    = false;
 let streamEnded       = false;
+let isInterrupted     = false;
 let currentAgentText  = null;
 let shouldDisconnect  = false;
 let holdMusicInterval = null;
@@ -377,6 +378,7 @@ let pcmContext = null;
 let nextPlayTime = 0;
 
 function interruptAudio() {
+    isInterrupted = true;
     if (audioPlayer) {
         audioPlayer.pause();
     }
@@ -394,6 +396,14 @@ function interruptAudio() {
     visualizerContainer.classList.remove("playing");
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ event: "interrupt" }));
+    }
+}
+
+function playAgentAudio(url) {
+    if (isInterrupted) return; // Prevent ghost audio from cancelled backend stream
+    audioQueue.push(url);
+    if (!isAudioPlaying) {
+        playNextAudio();
     }
 }
 
@@ -677,6 +687,8 @@ function startWebSpeechRecognition(voiceKey) {
         callStatusText.textContent = "Listening...";
     };
 
+    let speechSilenceTimer = null;
+
     // Show interim results in the status bar for visual feedback
     recognizer.onresult = (event) => {
         if (!isCallActive || isProcessing) return;
@@ -696,13 +708,31 @@ function startWebSpeechRecognition(voiceKey) {
         // Show interim in status bar (live typing feel)
         if (interimTranscript) {
             callStatusText.textContent = `"${interimTranscript.slice(0, 40)}..."`;
+            
+            // ULTRA LOW LATENCY HACK: Chrome natively waits ~2 seconds to finalize.
+            // We force it to finalize after 700ms of no new words.
+            if (speechSilenceTimer) clearTimeout(speechSilenceTimer);
+            speechSilenceTimer = setTimeout(() => {
+                if (speechRecognizer && interimTranscript.trim().length > 2) {
+                    addToolLog("Microphone", "success", "Fast silence detected. Forcing flush.");
+                    try { speechRecognizer.stop(); } catch(e) {}
+                }
+            }, 700);
         }
 
         // Only send final transcripts to the agent
         if (finalTranscript.trim()) {
-            // Ignore tiny echo blips if bot is speaking. Only interrupt for intentional phrases.
+            if (speechSilenceTimer) {
+                clearTimeout(speechSilenceTimer);
+                speechSilenceTimer = null;
+            }
+            
+            // Prevent ECHO loop: Only interrupt for intentional phrases, not tiny blips of the bot's own voice
             if (isSpeaking) {
-                if (finalTranscript.trim().length < 5) return;
+                if (finalTranscript.trim().length < 8) {
+                    addToolLog("Interruption", "warning", `Ignored short phrase to prevent echo: "${finalTranscript.trim()}"`);
+                    return;
+                }
                 interruptAudio();
             }
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -843,8 +873,8 @@ async function startMicRecording(voiceKey) {
     const dataArray    = new Uint8Array(analyser.frequencyBinCount);
     let hasSpoken      = false;
     let silenceStart   = null;
-    const THRESH       = 0.02;      // RMS threshold
-    const SILENCE_MS   = 1500;      // 1.5s silence → submit (prevents chopping words)
+    const THRESH       = 0.04;      // Increased RMS threshold to ignore background noise
+    const SILENCE_MS   = 600;       // Reduced to 600ms for zero latency feel!
     const MAX_WAIT_MS  = 12000;     // 12s idle → restart
     const waitStart    = Date.now();
 

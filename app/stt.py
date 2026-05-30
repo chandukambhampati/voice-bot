@@ -13,61 +13,77 @@ class BaseSTTProvider(ABC):
     async def transcribe_audio(self, audio_bytes: bytes, filename: str, language: str = None) -> tuple[str, int]:
         pass
 
-class OpenAISTTProvider(BaseSTTProvider):
+class OpenAIWhisperSTTProvider(BaseSTTProvider):
     def __init__(self):
-        # Pass dummy key if missing to prevent instant crash on container startup
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy_key")) 
-        print("Provider: OpenAI Whisper STT initialized.")
+        print("Provider: Local OpenAI-Whisper STT initialized (100% Free).")
+        try:
+            import whisper
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.model = whisper.load_model("tiny", device="cpu")
+        except Exception as e:
+            print(f"Failed to load OpenAI Whisper: {e}")
+            self.model = None
 
     async def transcribe_audio(
         self,
         audio_bytes: bytes,
         filename: str = "audio.webm",
-        language: str = "hi", # default to Hindi for Indic context
+        language: str = None
     ) -> tuple[str, int]:
-        """
-        Transcribes audio bytes using local faster-whisper.
-        Returns a tuple: (transcript_text, words_per_minute)
-        """
-        if len(audio_bytes) < 1000:
+        if len(audio_bytes) < 1000 or not self.model:
             return "", 0
 
         try:
             start_time = time.time()
-            # OpenAI requires a filename to determine the format. We'll pass it as a tuple.
-            file_tuple = (filename, audio_bytes, "audio/webm" if "webm" in filename else "audio/wav")
+            import tempfile
+            import os
             
-            # Request verbose_json to get segment durations to calculate WPM
-            response = await self.client.audio.transcriptions.create(
-                model="whisper-1",
-                file=file_tuple,
-                response_format="verbose_json"
-            )
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
+
+            import asyncio
+            def _transcribe():
+                kwargs = {"fp16": False}
+                if language:
+                    kwargs["language"] = language
+                
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    result = self.model.transcribe(tmp_path, **kwargs)
+                return result["text"], result.get("segments", [])
+
+            full_text, segments = await asyncio.to_thread(_transcribe)
             
-            transcript = response.text.strip()
-            word_count = len(transcript.split())
-            audio_duration = response.duration if hasattr(response, 'duration') and response.duration else 0.0
+            try:
+                os.remove(tmp_path)
+            except:
+                pass
             
+            duration = sum([s["end"] - s["start"] for s in segments]) if segments else 1.0
             wpm = 0
-            if audio_duration > 0:
-                wpm = int((word_count / audio_duration) * 60)
+            if duration > 0:
+                wpm = int((len(full_text.split()) / duration) * 60)
             
-            print(f"  OpenAI Whisper OK: {transcript!r} (WPM: {wpm}) in {time.time() - start_time:.2f}s")
-            return transcript, wpm
+            print(f"  Local STT OK: {full_text!r} (WPM: {wpm}) in {time.time() - start_time:.2f}s")
+            return full_text, wpm
             
         except Exception as e:
             import traceback
-            print(f"  OpenAI STT exception: {e}")
+            print(f"  Local STT exception: {e}")
             traceback.print_exc()
             return f"[Error: {str(e)}]", 0
 
 class STTService:
     def __init__(self):
-        # We can add SarvamSTTProvider here later if needed
-        self.provider = OpenAISTTProvider()
+        self.provider = OpenAIWhisperSTTProvider()
 
     async def transcribe_audio(self, audio_bytes: bytes, filename: str, language: str = None) -> tuple[str, int]:
-        return await self.provider.transcribe_audio(audio_bytes, filename, language)
+        # For true auto-detect on a real phone call, we completely ignore frontend language hints!
+        return await self.provider.transcribe_audio(audio_bytes, filename, language=None)
 
 # Basic test
 if __name__ == "__main__":

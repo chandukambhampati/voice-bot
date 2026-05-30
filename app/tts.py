@@ -31,7 +31,7 @@ class BaseTTSProvider(ABC):
         return self.output_dir / f"tts_{h}.mp3"
 
     @abstractmethod
-    async def generate_speech(self, text: str, voice_key: str, target_wpm: int) -> AsyncGenerator[bytes, None]:
+    async def generate_speech(self, text: str, voice_key: str, target_wpm: int, emotion: str = "calm") -> AsyncGenerator[bytes, None]:
         pass
 
 class OpenAITTSProvider(BaseTTSProvider):
@@ -52,7 +52,7 @@ class OpenAITTSProvider(BaseTTSProvider):
         self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy_key")) # Uses OPENAI_API_KEY
         print("Provider: OpenAI TTS initialized.")
 
-    async def generate_speech(self, text: str, voice_key: str, target_wpm: int) -> AsyncGenerator[bytes, None]:
+    async def generate_speech(self, text: str, voice_key: str, target_wpm: int, emotion: str = "calm") -> AsyncGenerator[bytes, None]:
         voice_model = self.VOICE_MAP.get(voice_key, "nova")
         speed_scale = max(0.8, min(target_wpm / 150.0, 1.25))
 
@@ -145,6 +145,59 @@ class SarvamTTSProvider(BaseTTSProvider):
         except Exception as e:
             print(f"  Sarvam TTS WS error: {e}")
 
+class EdgeTTSProvider(BaseTTSProvider):
+    VOICE_MAP = {
+        "en_neerja":  "en-IN-NeerjaNeural", 
+        "en_prabhat": "en-IN-PrabhatNeural",
+        "hi_swara":   "hi-IN-SwaraNeural",
+        "hi_madhur":  "hi-IN-MadhurNeural",
+        "te_shruti":  "te-IN-ShrutiNeural",
+        "te_mohan":   "te-IN-MohanNeural",
+        "en": "en-IN-NeerjaNeural",
+        "hi": "hi-IN-SwaraNeural",
+        "te": "te-IN-ShrutiNeural",
+    }
+
+    def __init__(self, output_dir: Path):
+        super().__init__(output_dir)
+        print("Provider: Edge TTS (Free Azure Neural) initialized.")
+
+    async def generate_speech(self, text: str, voice_key: str, target_wpm: int, emotion: str = "calm") -> AsyncGenerator[bytes, None]:
+        voice_model = self.VOICE_MAP.get(voice_key, "en-IN-NeerjaNeural")
+        
+        rate = "+0%"
+        pitch = "+0Hz"
+        
+        if emotion == "sad":
+            rate = "-5%"
+            pitch = "-2Hz"
+        elif emotion == "angry":
+            rate = "+5%"
+            pitch = "-2Hz"
+        elif emotion == "happy":
+            rate = "+5%"
+            pitch = "+2Hz"
+            
+        import edge_tts
+        communicate = edge_tts.Communicate(text, voice_model, rate=rate, pitch=pitch)
+        
+        try:
+            mp3_data = bytearray()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    mp3_data.extend(chunk["data"])
+            
+            if mp3_data:
+                # Encode as base64 Data URI so the frontend can play it as a standard audio URL
+                import base64
+                import json
+                b64_mp3 = base64.b64encode(mp3_data).decode("utf-8")
+                data_uri = f"data:audio/mp3;base64,{b64_mp3}"
+                # We yield a special JSON-formatted byte string that main.py can intercept
+                yield json.dumps({"event": "audio_sentence", "audio_url": data_uri}).encode("utf-8")
+        except Exception as e:
+            print(f"  Edge TTS error: {e}")
+
 class TTSService:
     def __init__(self, output_dir: str = None):
         self.app_dir = Path(__file__).resolve().parent
@@ -154,19 +207,23 @@ class TTSService:
             self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        provider_name = os.environ.get("TTS_PROVIDER", "openai").lower()
+        # FORCE edge TTS to ensure the very low-cost / free implementation is active
+        provider_name = "edge"
+        
         if provider_name == "sarvam" and os.environ.get("SARVAM_API_KEY"):
             self.provider = SarvamTTSProvider(self.output_dir)
-        else:
+        elif provider_name == "openai":
             self.provider = OpenAITTSProvider(self.output_dir)
+        else:
+            self.provider = EdgeTTSProvider(self.output_dir)
 
-    async def generate_speech(self, text: str, voice_key: str = "hi", target_wpm: int = 150) -> AsyncGenerator[bytes, None]:
+    async def generate_speech(self, text: str, voice_key: str = "hi", target_wpm: int = 150, emotion: str = "calm") -> AsyncGenerator[bytes, None]:
         text = text.strip()
         if not any(c.isalnum() for c in text):
             return
             
         text = normalize_phonetics(text)
-        async for chunk in self.provider.generate_speech(text, voice_key, target_wpm):
+        async for chunk in self.provider.generate_speech(text, voice_key, target_wpm, emotion):
             yield chunk
 
     async def prewarm(self, voice_key: str = "hi"):

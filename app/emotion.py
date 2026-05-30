@@ -5,9 +5,9 @@ try:
     from transformers import pipeline
     import torchaudio
     HAS_TRANSFORMERS = True
-except ImportError:
+except Exception as e:
     HAS_TRANSFORMERS = False
-    print("Warning: transformers/torchaudio not installed. Falling back to mock Emotion Detection.")
+    print(f"Warning: transformers/torchaudio failed to load (likely missing MSVC Redistributable on Windows). Falling back to mock. Error: {e}")
 
 class EmotionService:
     def __init__(self):

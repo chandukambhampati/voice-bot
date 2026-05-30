@@ -142,7 +142,10 @@ async def websocket_endpoint(websocket: WebSocket):
             })
             
             async for chunk in tts_service.generate_speech(initial_greeting, voice_key=voice_key):
-                await websocket.send_bytes(chunk)
+                if chunk.startswith(b'{"event":'):
+                    await websocket.send_text(chunk.decode('utf-8'))
+                else:
+                    await websocket.send_bytes(chunk)
                 
         except Exception as e:
             print(f"[{session_id}] Greeting TTS error: {e}")
@@ -193,6 +196,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_json({"event": "processing"})
 
                     audio_bytes = base64.b64decode(audio_b64)
+                    
+                    # Detect emotion from audio
+                    detected_emotion = "calm"
+                    try:
+                        detected_emotion = await emotion_service.detect_emotion(audio_bytes)
+                        print(f"[{session_id}] Detected emotion: {detected_emotion}")
+                    except Exception as e:
+                        print(f"[{session_id}] Emotion detection error: {e}")
 
                     # Use client-provided filename (carries correct extension for MIME detection)
                     # Fall back to .webm for Indic, .wav for English
@@ -212,7 +223,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if user_text.strip() and not user_text.startswith("[Error"):
                         if session_id in active_tasks:
                             active_tasks[session_id].cancel()
-                        task = asyncio.create_task(process_agent_turn(websocket, session_id, user_text, voice_key, "auto", wpm))
+                        task = asyncio.create_task(process_agent_turn(websocket, session_id, user_text, voice_key, detected_emotion, wpm))
                         active_tasks[session_id] = task
                     else:
                         err = user_text if user_text.startswith("[Error") else ""
@@ -264,12 +275,15 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
                 item = await sentence_queue.get()
                 if item is None:
                     break
-                sentence, vk, w_pm = item
+                sentence, vk, dyn_emotion, w_pm = item
                 
-                async for chunk in tts_service.generate_speech(sentence, voice_key=vk, target_wpm=w_pm):
+                async for chunk in tts_service.generate_speech(sentence, voice_key=vk, target_wpm=w_pm, emotion=dyn_emotion):
                     if asyncio.current_task().cancelled():
                         return
-                    await websocket.send_bytes(chunk)
+                    if chunk.startswith(b'{"event":'):
+                        await websocket.send_text(chunk.decode("utf-8"))
+                    else:
+                        await websocket.send_bytes(chunk)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -282,6 +296,7 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
         full_response_text = ""
         current_sentence = ""
         dynamic_voice_key = voice_key
+        dynamic_emotion = emotion  # Default to whatever was detected acoustically or "calm"
         buffer = ""
         tag_extracted = False
 
@@ -293,18 +308,31 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
                 
                 if not tag_extracted:
                     buffer += t
+                    # Need to wait until we have enough buffer to see if tags are present
                     if "]" in buffer:
-                        tag_extracted = True
-                        match = re.search(r'\[LANG:(EN|HI|TE)\]', buffer, re.IGNORECASE)
-                        if match:
-                            lang = match.group(1).upper()
+                        # Find all tags like [LANG:XX] or [EMOTION:YY]
+                        lang_match = re.search(r'\[LANG:(EN|HI|TE)\]', buffer, re.IGNORECASE)
+                        emotion_match = re.search(r'\[EMOTION:(sad|angry|happy|calm)\]', buffer, re.IGNORECASE)
+                        
+                        if lang_match:
+                            lang = lang_match.group(1).upper()
                             if lang == 'TE': dynamic_voice_key = "te_shruti"
                             elif lang == 'HI': dynamic_voice_key = "hi_swara"
                             elif lang == 'EN': dynamic_voice_key = "en_neerja"
+                            
+                        if emotion_match:
+                            dynamic_emotion = emotion_match.group(1).lower()
+                            print(f"[{session_id}] LLM elected emotion: {dynamic_emotion}")
                         
+                        # Once we see a closing bracket, strip all tags and output the rest
                         t = re.sub(r'\[.*?\]', '', buffer).lstrip()
-                        # Do not continue here, let it fall through to be processed
-                    elif len(buffer) > 15:
+                        tag_extracted = True
+                    elif len(buffer) > 25 and "[" not in buffer:
+                        # If buffer is getting long and there's no open bracket, assume no tags
+                        tag_extracted = True
+                        t = buffer
+                    elif len(buffer) > 40:
+                        # Failsafe if the bracket is malformed
                         tag_extracted = True
                         t = buffer
                     else:
@@ -319,7 +347,7 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
                         sentences = re.split(r'(?<=[.?!,;])\s+|\n+', current_sentence)
                         complete_sentence = sentences[0].strip()
                         if complete_sentence:
-                            await sentence_queue.put((complete_sentence, dynamic_voice_key, wpm))
+                            await sentence_queue.put((complete_sentence, dynamic_voice_key, dynamic_emotion, wpm))
                             current_sentence = ' '.join(sentences[1:])
             
             if asyncio.current_task().cancelled():
@@ -330,13 +358,17 @@ async def process_agent_turn(websocket: WebSocket, session_id: str, user_text: s
         print(f"[{session_id}] agent turn error: {e}")
         traceback.print_exc()
     finally:
-        # Push any remaining text as the last sentence
-        if current_sentence.strip():
-            await sentence_queue.put((current_sentence.strip(), dynamic_voice_key, wpm))
-        
-        # Signal consumer to stop and wait for it
-        await sentence_queue.put(None)
-        await tts_task
+        if asyncio.current_task().cancelled():
+            print(f"[{session_id}] Turn cancelled. Stopping TTS queue.")
+            tts_task.cancel()
+        else:
+            # Push any remaining text as the last sentence
+            if current_sentence.strip():
+                await sentence_queue.put((current_sentence.strip(), dynamic_voice_key, dynamic_emotion, wpm))
+            
+            # Signal consumer to stop and wait for it
+            await sentence_queue.put(None)
+            await tts_task
 
         state["history"].append({"role": "assistant", "content": full_response_text})
 
