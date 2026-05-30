@@ -9,14 +9,9 @@ DEFAULT_LANGSMITH_PROJECT = "mission8-agent-evals"
 
 
 def load_mission_env() -> None:
-    # Try local directory first (root), then parents[2] for sub-exercise folder layouts
     env_path = Path(__file__).resolve().parent / ".env"
     if not env_path.exists():
-        env_path = Path(__file__).resolve().parents[2] / ".env"
-        if not env_path.exists():
-            env_path = Path.cwd() / ".env"
-            if not env_path.exists():
-                return
+        return
 
     for line in env_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
