@@ -23,6 +23,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . /app
 
+# Pre-download the heavy ML models into the Docker image so Cloud Run doesn't download them on every cold start!
+# Cloud Run's filesystem is a RAM disk. Downloading at runtime consumes memory and causes OOM crashes.
+RUN python -c "import whisper; whisper.load_model('tiny', device='cpu')"
+RUN python -c "from transformers import pipeline; pipeline('audio-classification', model='ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition')"
+
 # Expose port 8080 for Cloud Run
 EXPOSE 8080
 
