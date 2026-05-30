@@ -21,7 +21,7 @@ class OpenAIWhisperSTTProvider(BaseSTTProvider):
             import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                self.model = whisper.load_model("tiny", device="cpu")
+                self.model = whisper.load_model("base", device="cpu")
         except Exception as e:
             print(f"Failed to load OpenAI Whisper: {e}")
             self.model = None
@@ -32,7 +32,9 @@ class OpenAIWhisperSTTProvider(BaseSTTProvider):
         filename: str = "audio.webm",
         language: str = None
     ) -> tuple[str, int]:
-        if len(audio_bytes) < 1000 or not self.model:
+        if not self.model:
+            return "[System Error: Speech Recognition Model failed to boot on Cloud Run.]", 0
+        if len(audio_bytes) < 1000:
             return "", 0
 
         try:
