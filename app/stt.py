@@ -42,9 +42,9 @@ class OpenAIWhisperSTTProvider(BaseSTTProvider):
             import tempfile
             import os
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-                tmp.write(audio_bytes)
-                tmp_path = tmp.name
+            fd, tmp_path = tempfile.mkstemp(suffix=".webm")
+            with os.fdopen(fd, 'wb') as f:
+                f.write(audio_bytes)
 
             import asyncio
             def _transcribe():
