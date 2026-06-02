@@ -827,14 +827,14 @@ async function startMicRecording(voiceKey) {
         audioChunks = [];
 
         // Skip tiny blobs (noise / accidental trigger)
-        if (blob.size < 2000) {
+        if (blob.size < 100) {
             if (isCallActive && !isSpeaking && !isProcessing) {
                 setTimeout(() => startMicRecording(voiceKey), 300);
             }
             return;
         }
 
-        addToolLog("Whisper", "running", "Sending audio to Whisper AI...");
+        addToolLog("Whisper", "running", `Sending audio blob (${blob.size} bytes) to server...`);
 
         const reader = new FileReader();
         reader.readAsDataURL(blob);
@@ -875,8 +875,8 @@ async function startMicRecording(voiceKey) {
     const dataArray    = new Uint8Array(analyser.frequencyBinCount);
     let hasSpoken      = false;
     let silenceStart   = null;
-    const THRESH       = 0.025;     // Lowered threshold so quiet microphones are recognized
-    const SILENCE_MS   = 600;       // Reduced to 600ms for zero latency feel!
+    const THRESH       = 0.002;     // EXTREMELY low threshold to catch even the quietest microphones!
+    const SILENCE_MS   = 800;       // Wait slightly longer to prevent cutting off words
     const MAX_WAIT_MS  = 12000;     // 12s idle → restart
     const waitStart    = Date.now();
 
