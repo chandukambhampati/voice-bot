@@ -44,6 +44,8 @@ const callToggleBtn       = document.getElementById("call-toggle-btn");
 const callStatusText      = document.getElementById("call-status-text");
 const languageSelect      = document.getElementById("language-select");
 const inputModeSelect     = document.getElementById("input-mode-select");
+const pttContainer        = document.getElementById("ptt-container");
+const pttBtn              = document.getElementById("ptt-btn");
 const visualizerContainer = document.querySelector(".visualizer-container");
 const avatar              = document.querySelector(".caller-avatar");
 const transcriptContainer = document.getElementById("transcript-container");
@@ -166,6 +168,19 @@ callToggleBtn.addEventListener("click", toggleCall);
 sendInputBtn.addEventListener("click", sendKeyboardInput);
 keyboardInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendKeyboardInput(); });
 
+inputModeSelect.addEventListener("change", () => {
+    if (isCallActive) {
+        if (inputModeSelect.value === "ptt") {
+            pttContainer.style.display = "flex";
+            stopListening();
+            callStatusText.textContent = "Ready (Hold PTT)";
+        } else {
+            pttContainer.style.display = "none";
+            startListening();
+        }
+    }
+});
+
 // ---------------------------------------------------------------------------
 // Call Controls
 // ---------------------------------------------------------------------------
@@ -180,6 +195,10 @@ function startCall() {
     callToggleBtn.classList.add("active");
     callStatusText.textContent = "Connecting...";
     callStatusText.classList.add("active");
+
+    if (inputModeSelect.value === "ptt") {
+        pttContainer.style.display = "flex";
+    }
     avatar.classList.add("pulsing");
     transcriptContainer.innerHTML = "";
     
@@ -199,6 +218,7 @@ function endCall() {
     callStatusText.textContent = "Disconnected";
     callStatusText.classList.remove("active");
     avatar.classList.remove("pulsing");
+    pttContainer.style.display = "none";
     visualizerContainer.classList.remove("playing");
     keyboardInput.setAttribute("disabled", "true");
     sendInputBtn.setAttribute("disabled", "true");
@@ -628,6 +648,8 @@ function startListening() {
 
     if (mode === "speech_api") {
         startWebSpeechRecognition(vk);
+    } else if (mode === "ptt") {
+        callStatusText.textContent = "Ready (Hold PTT)";
     } else {
         startMicRecording(vk);
     }
@@ -1055,3 +1077,75 @@ function addToolLog(source, type, details) {
 function jsonPacket(event, data) {
     return JSON.stringify({ event, ...data });
 }
+
+// ---------------------------------------------------------------------------
+// PUSH TO TALK CONTROLS
+// ---------------------------------------------------------------------------
+async function startPttRecording() {
+    if (!isCallActive || isSpeaking || isProcessing) return;
+    
+    pttBtn.classList.add("recording");
+    callStatusText.textContent = "Recording...";
+
+    try {
+        if (!userMediaStream) {
+            userMediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: false
+            });
+        }
+    } catch (e) {
+        addToolLog("PTT", "action", "Mic blocked or unavailable.");
+        pttBtn.classList.remove("recording");
+        return;
+    }
+
+    let mimeType = "audio/webm;codecs=opus";
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/webm";
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/ogg;codecs=opus";
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/ogg";
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "audio/mp4";
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "";
+
+    mediaRecorder = new MediaRecorder(userMediaStream, { mimeType });
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+        if (!isCallActive || audioChunks.length === 0) return;
+        const blob = new Blob(audioChunks, { type: mimeType });
+        audioChunks = [];
+        
+        addToolLog("PTT", "running", `Sending ${blob.size} bytes...`);
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = () => {
+            const b64 = reader.result.split(",")[1];
+            const vk = languageSelect.value;
+            const ext = mimeType.includes("webm") ? "webm" : "ogg";
+            if (isSpeaking) interruptAudio();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ event: "audio_input", audio: b64, voice_key: vk, filename: `audio.${ext}` }));
+            }
+        };
+    };
+
+    mediaRecorder.start();
+}
+
+function stopPttRecording() {
+    pttBtn.classList.remove("recording");
+    if (inputModeSelect.value === "ptt") callStatusText.textContent = "Processing...";
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+    }
+}
+
+// Bind PTT Button Events
+pttBtn.addEventListener("mousedown", startPttRecording);
+pttBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startPttRecording(); }, { passive: false });
+window.addEventListener("mouseup", stopPttRecording);
+window.addEventListener("touchend", stopPttRecording);

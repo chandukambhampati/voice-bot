@@ -91,10 +91,20 @@
                 <div class="settings-group">
                     <label for="input-mode-select">Your Speech Input Mode</label>
                     <select id="input-mode-select" class="styled-select">
-                        <option value="mic_stream" selected>Whisper AI (True Phone Call Auto-Detect)</option>
+                        <option value="ptt" selected>Push-to-Talk (100% Reliable Fallback)</option>
+                        <option value="mic_stream">Whisper AI (True Phone Call Auto-Detect)</option>
                         <option value="speech_api">Web Speech API (Fast but English-only)</option>
                     </select>
                 </div>
+            </div>
+
+            <!-- Push To Talk Controls (Hidden by default, shown during call) -->
+            <div id="ptt-container" class="ptt-container" style="display: none;">
+                <button id="ptt-btn" class="ptt-btn">
+                    <i class="fa-solid fa-microphone"></i>
+                    <span>Hold to Speak</span>
+                </button>
+                <p class="ptt-help">Release to send</p>
             </div>
 
             <!-- Mic Permission Status Banner -->
